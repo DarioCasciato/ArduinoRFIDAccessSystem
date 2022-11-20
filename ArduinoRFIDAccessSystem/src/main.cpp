@@ -178,7 +178,6 @@ void loop()
 
     if(RfidPresent.edge_neg && wasPresentMaster)
     {
-      Serial.println("1");
       masterSet(wasPresent);
       SignalFullReset();
       state = idle;
@@ -492,8 +491,6 @@ bool isWhitelistMember(unsigned long UID)
 void masterSet(unsigned long UID)
 {
   registeredMaster = UID;
-  Serial.println("Registered Master: ");
-  Serial.println(registeredMaster);
   EEPROM.put(ADDRESS_MASTER, registeredMaster);
 }
 
