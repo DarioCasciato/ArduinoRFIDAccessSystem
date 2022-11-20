@@ -88,7 +88,9 @@ MFRC522::MIFARE_Key key;
 
 /*Flags*/
 bool isMaster = 0;
-bool repeatFlag = 0;
+bool repeatFlagPresent = 0;
+unsigned long wasPresent = 0;
+bool wasPresentMaster = 0;
 
 /*UID*/
 unsigned long TagUID;
@@ -98,6 +100,8 @@ unsigned long registeredMaster;
 byte bufferLen = 18;
 byte readBlockData[18];
 
+enum states_t {noMaster, idle};
+states_t state = noMaster;
 
 
 void setup()
@@ -118,7 +122,7 @@ void setup()
   LED.sync();
   noTone(SIGNALIZER_BUZZER);
 
-
+  
 
   //Get Whitelist
   EEPROM.get(ADDRESS_WHITELIST, whitelist);
@@ -128,10 +132,11 @@ void setup()
     if(whitelist[loop] == 0xFFFFFFFF) whitelist[loop] = NULL;
   }
 
-
   //Get Master
   EEPROM.get(ADDRESS_MASTER, registeredMaster);
   if(registeredMaster == 0xFFFFFFFF) registeredMaster = 0;
+
+  masterReset();
 
 }
 
@@ -144,24 +149,31 @@ void loop()
   RfidPresent.edge = RfidPresent.act ^ RfidPresent.old;
   RfidPresent.edge_pos = RfidPresent.edge & RfidPresent.act;
   RfidPresent.edge_neg = RfidPresent.edge & RfidPresent.old;
-  RfidPresent.old = RfidPresent.act;
+
 
   // Read Tag Values
   isMaster = checkMaster();
-  TagUID = getUID();
+  if(RfidPresent.edge_pos) TagUID = getUID();
+  
+  if(isMaster) wasPresentMaster = 1;
+  if(RfidPresent.edge_neg) wasPresent = TagUID;
 
   for (byte i = 0; i < 6; i++)
     key.keyByte[i] = 0xFF;
 
   //----------Loop Main
-
 	
   // MAIN CODE HERE
-  
 
   //----------Loop Footer
 
-  TagUID = 0;
+  wasPresent = 0;
+  RfidPresent.old = RfidPresent.act;
+  if(RfidPresent.edge_neg) 
+  {
+    wasPresentMaster = 0;
+    TagUID = 0;
+  }
 
   //----------Timer Setup
 
@@ -303,9 +315,9 @@ bool tagPresent()
 
   if (!mfrc522.PICC_IsNewCardPresent())
   {
-    if (repeatFlag)
+    if (repeatFlagPresent)
     {
-      repeatFlag = 0;
+      repeatFlagPresent = 0;
       return 1;
     }
     return 0;
@@ -317,9 +329,9 @@ bool tagPresent()
     }
     if (!mfrc522.PICC_IsNewCardPresent())
     {
-      if (repeatFlag)
+      if (repeatFlagPresent)
       {
-        repeatFlag = 0;
+        repeatFlagPresent = 0;
         return 1;
       }
       return 0;
@@ -328,14 +340,14 @@ bool tagPresent()
     /* Select one of the cards */
     if (!mfrc522.PICC_ReadCardSerial())
     {
-      if (repeatFlag)
+      if (repeatFlagPresent)
       {
-        repeatFlag = 0;
+        repeatFlagPresent = 0;
         return 1;
       }
       return 0;
     }
-    repeatFlag = 1;
+    repeatFlagPresent = 1;
     return 1;
   }
 }
@@ -345,22 +357,16 @@ unsigned long getUID()
   status = NULL;
   byte status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, 2, &key, &(mfrc522.uid));
 
-  if (status != MFRC522::STATUS_OK)
-  {
-    return 0;
-  }
+  if (status != MFRC522::STATUS_OK) return TagUID;
 
   /* Reading data from the Block */
   status = mfrc522.MIFARE_Read(2, readBlockData, &bufferLen);
-  if (status != MFRC522::STATUS_OK)
-  {
-    return 0;
-  }
+  if (status != MFRC522::STATUS_OK) return 0;
   else
   {
     unsigned long tempUID[4] = {0};
     for (byte i = 0; i < mfrc522.uid.size; i++)
-      tempUID[i] = mfrc522.uid.uidByte[i];
+    tempUID[i] = mfrc522.uid.uidByte[i];
 
     volatile unsigned long UID = 0;
     UID |= (tempUID[0] << 24);
@@ -368,7 +374,7 @@ unsigned long getUID()
     UID |= tempUID[2] << 8;
     UID |= tempUID[3];
 
-    return UID;
+    return UID;    
   }
 }
 
