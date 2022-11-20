@@ -164,6 +164,41 @@ void loop()
   //----------Loop Main
 	
   // MAIN CODE HERE
+  switch (state)
+  {
+  case noMaster:
+    if(RfidPresent.act)
+    {
+      if(isMaster)
+      {
+        LED.set_rgbw(0, color_green);
+        LED.sync();
+      }
+    }
+
+    if(RfidPresent.edge_neg && wasPresentMaster)
+    {
+      masterSet(wasPresent);
+      SignalFullReset();
+      state = idle;
+    }
+    break;
+  
+  case idle:
+    if(RfidPresent.edge_pos)
+    {
+      if(isMaster)
+      {
+        if(TagUID != registeredMaster) SignalReject();
+      }
+
+      else if(!isWhitelistMember(TagUID)) SignalPermDenied();
+    }
+    break;
+
+  default:
+    break;
+  }
 
   //----------Loop Footer
 
