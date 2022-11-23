@@ -1,3 +1,5 @@
+//==================== Includes ====================
+
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <SPI.h>
@@ -5,6 +7,8 @@
 #include <string.h>
 #include "../lib/Arduino_SK6812/SK6812.h"
 
+
+//==================== Defines ====================
 
 /*Pin definition*/
 #define RST_PIN 9
@@ -15,11 +19,13 @@
 #define SIGNALIZER_OPENER 17
 
 /*Define size of Whitelist (depends on RAM size of Controller)*/
-#define WHITELIST_SIZE 10
+#define WHITELIST_SIZE 100
 
 #define ADDRESS_WHITELIST 0x020
+#define ADDRESS_WHITELISTCOUNT 0x005
 #define ADDRESS_MASTER 0x010
 
+//==================== Objects ====================
 
 /*struct for edge trigger*/
 typedef struct
@@ -37,8 +43,10 @@ typedef struct
   unsigned char pulse;
 } timer_t;
 
+/*enum for states*/
+enum states_t {noMaster, idle, keying};
 
-/*Objects*/
+/*Classes*/
 SK6812 LED(1);                    // Numbers of LEDs in LED chain
 MFRC522 mfrc522(SS_PIN, RST_PIN); // Create MFRC522 instance
 
@@ -47,6 +55,7 @@ RGBW color_red = {100, 0, 0, 0}; // Values from 0-255
 RGBW color_green = {0, 100, 0, 0};
 RGBW color_off = {0, 0, 0, 0};
 
+//==================== Function Prototypes ====================
 
 // Signalisation Functions
 void SignalPositive();
@@ -75,6 +84,7 @@ bool isWhitelistMember(unsigned long UID);
 void masterSet(unsigned long UID);
 void masterReset();
 
+//==================== Global Variables ====================
 
 /*RFID reading variables*/
 int blockNum = 2;
@@ -89,13 +99,14 @@ bool repeatFlagPresent = 0;
 /*UID*/
 unsigned long TagUID = 0;
 unsigned long whitelist[WHITELIST_SIZE] = {0};
+unsigned char whitelistMemberCount = 0;
 unsigned long registeredMaster = 0;
 
 byte bufferLen = 18;
 byte readBlockData[18];
 
-enum states_t {noMaster, idle, keying};
 
+//==================== Setup ====================
 
 void setup()
 {
@@ -116,14 +127,22 @@ void setup()
   LED.sync();
   noTone(SIGNALIZER_BUZZER);
 
+
+  //-------- EEPROM --------
   
-  //Get Whitelist
+  //Get Whitelist 
   EEPROM.get(ADDRESS_WHITELIST, whitelist);
 
   for(uint8_t loop = 0; loop < WHITELIST_SIZE; loop++)
   {
     if(whitelist[loop] == 0xFFFFFFFF) whitelist[loop] = 0;
   }
+
+
+  //get whitelistcount
+  EEPROM.get(ADDRESS_WHITELISTCOUNT, whitelistMemberCount);
+  if(registeredMaster == 0xFF) registeredMaster = 0;
+
 
   //Get Master
   EEPROM.get(ADDRESS_MASTER, registeredMaster);
@@ -137,9 +156,10 @@ void setup()
     }
 
     whitelist[WHITELIST_SIZE] = 0;
-  }
+  }  
 }
 
+//==================== Loop ====================
 
 void loop()
 {
@@ -161,6 +181,7 @@ void loop()
   bool keyingResetWhitelist = 0;
   bool keyingResetMaster = 0;
   
+  //If Master registered, go to idle state
   if(registeredMaster != 0) state = idle;
 
   while(1)
@@ -174,7 +195,7 @@ void loop()
     RfidPresent.edge_neg = RfidPresent.edge & RfidPresent.old;
 
 
-    // Read Tag Values
+    //Tag Information
     isMaster = checkMaster();
     if(RfidPresent.edge_pos) TagUID = getUID();
     
@@ -195,198 +216,209 @@ void loop()
 
     //----------Loop Main
     
-    // MAIN CODE HERE
     switch (state)
     {
-    case noMaster:
-    if(keyingResetMaster)
-    {
-      if(RfidPresent.edge_neg) keyingResetMaster = 0;
-    }
-    else
-    {
-      if(RfidPresent.act && isMaster)
+//==================== noMaster
+
+      case noMaster:
+      //Don't register Master, if Reset was executed
+      if(keyingResetMaster)
       {
-        LED.set_rgbw(0, color_green);
-        LED.sync();
-        masterSet(TagUID);        
-        
-        openkeying = 1;
-        state = keying;
-      }
-      break;
-    }
-      
-
-    case idle:
-      if(RfidPresent.edge_pos)
-      {
-        Serial.println(TagUID);
-        if(isMaster)
-        {
-          if(TagUID == registeredMaster)
-          {
-            openkeying = 1;
-            state = keying;
-          }
-          else
-          {
-            SignalReject();
-          }
-        }
-        //is User
-        else
-        {
-          if(isWhitelistMember(TagUID))
-          {
-            //Access Granted
-            digitalWrite(SIGNALIZER_OPENER, HIGH);
-            SignalPositive();
-            delay(5000);
-            digitalWrite(SIGNALIZER_OPENER, LOW);
-          }
-          else SignalPermDenied(); //Access Denied
-        }
-      }
-      break;
-
-
-    case keying:
-    if(RfidPresent.edge_pos)
-    {
-      if(isMaster && TagUID != registeredMaster)
-      {
-        Serial.println("Test");
-        SignalEndKeying();
-        keyingTimeout = 0;
-        keyingPresentTime = 0;
-        state = idle;
-      }
-    }
-
-      if(RfidPresent.act)
-      {
-        //Reset timeout
-        keyingTimeout = 0;
-        
-        //Count present time
-        if(time.pulse) keyingPresentTime++;
-
-        //Light up signalization LED
-        if(isMaster == 0 || (isMaster && TagUID == registeredMaster))
-        {
-          LED.set_rgbw(0, color_green);
-          LED.sync();
-        }
-
-        if(isMaster)
-        {
-          //Master held longer than 10 seconds, reset Whitelist
-          if(keyingPresentTime == 10 && keyingResetWhitelist == 0) 
-          {
-            keyingResetWhitelist = 1;
-
-            delay(5);
-            LED.set_rgbw(0, color_off);
-            LED.sync();
-            SignalResetWhitelist();
-            
-            whitelistReset();
-          }
-          //Master held longer than 15 seconds, reset Master + Whitelist
-          if(keyingPresentTime == 15 && keyingResetMaster == 0)
-          {
-            keyingResetMaster = 1;
-            SignalFullReset();
-            whitelistReset();
-            masterReset();
-
-            state = noMaster;
-          }
-        }
+        if(RfidPresent.edge_neg) keyingResetMaster = 0;
       }
       else
       {
-        //Timout handler
-        if(time.pulse) 
+        //Register Master if Master is presented
+        if(RfidPresent.act && isMaster)
         {
-          keyingTimeout++;
+          LED.set_rgbw(0, color_green);
+          LED.sync();
+          masterSet(TagUID);        
+          
+          openkeying = 1;
+          state = keying;
+        }
+        break;
+      }
+        
+//==================== Idle
 
-          if(keyingTimeout >= 10)
+      case idle:
+        if(RfidPresent.edge_pos)
+        {
+          Serial.println(TagUID);
+          if(isMaster)
           {
-            keyingTimeout = 0;
-            SignalEndKeying();
-            state = idle;
+            //Go to keying state, if registered Master is presented
+            if(TagUID == registeredMaster)
+            {
+              openkeying = 1;
+              state = keying;
+            }
+            else
+            {
+              //Presented not registered Master
+              SignalReject();
+            }
           }
+          //is User
+          else
+          {
+            if(isWhitelistMember(TagUID))
+            {
+              //Access Granted
+              digitalWrite(SIGNALIZER_OPENER, HIGH);
+              SignalPositive();
+              delay(5000);
+              digitalWrite(SIGNALIZER_OPENER, LOW);
+            }
+            //Access Denied
+            else if(TagUID != 0) SignalPermDenied();
+          }
+        }
+        break;
+
+//==================== Keying
+
+      case keying:
+      if(RfidPresent.edge_pos)
+      {
+        //Not registered Master presented
+        if(isMaster && TagUID != registeredMaster)
+        {
+          SignalEndKeying();
+          keyingTimeout = 0;
+          keyingPresentTime = 0;
+          state = idle;
         }
       }
 
-      if(RfidPresent.edge_neg && keyingResetMaster == 0)
-      {
-        if(isMaster) wasPresentMaster = 1;
-        keyingResetWhitelist = 0;
-        keyingTimeout = 0;
-        Serial.println("User");
-
-        Serial.println(wasPresentMaster);
-        Serial.println(keyingPresentTime);
-        Serial.println(wasPresent);
-        delay(100);
-
-        LED.set_rgbw(0, color_off);
-        LED.sync();
-
-        if(wasPresentMaster)
+        if(RfidPresent.act)
         {
-          if(keyingPresentTime < 10)
+          //Reset timeout
+          keyingTimeout = 0;
+          
+          //Count present time
+          if(time.pulse) keyingPresentTime++;
+
+          //Light up signalization LED
+          if(isMaster == 0 || (isMaster && TagUID == registeredMaster))
           {
-            if(openkeying) SignalPositive();
-            else
+            LED.set_rgbw(0, color_green);
+            LED.sync();
+          }
+
+          //Remove if user is presented 5 seconds
+          if(keyingPresentTime == 5 && isMaster == 0 && isWhitelistMember(TagUID))
+          {
+            Serial.println("Removed");
+            SignalRemovedMember();
+            whitelistRemove(TagUID);
+          }
+
+          if(isMaster)
+          {
+            //Master held longer than 10 seconds, reset Whitelist
+            if(keyingPresentTime == 10 && keyingResetWhitelist == 0) 
             {
+              keyingResetWhitelist = 1;
+
+              delay(5);
+              LED.set_rgbw(0, color_off);
+              LED.sync();
+              SignalResetWhitelist();
+              
+              whitelistReset();
+            }
+            //Master held longer than 15 seconds, reset Master + Whitelist
+            if(keyingPresentTime == 15 && keyingResetMaster == 0)
+            {
+              keyingResetMaster = 1;
+              SignalFullReset();
+              whitelistReset();
+              masterReset();
+
+              state = noMaster;
+            }
+          }
+        }
+        else
+        {
+          //Timout handler
+          if(time.pulse) 
+          {
+            keyingTimeout++;
+
+            if(keyingTimeout >= 10)
+            {
+              keyingTimeout = 0;
               SignalEndKeying();
               state = idle;
             }
           }
-          
         }
-        else
+
+
+        //Card is not rpesented anymore
+        if(RfidPresent.edge_neg && keyingResetMaster == 0)
         {
-          if(keyingPresentTime > 5) 
+          isMaster = checkMaster();
+          if(isMaster) wasPresentMaster = 1;
+          keyingResetWhitelist = 0;
+          keyingTimeout = 0;
+          delay(100);
+
+          LED.set_rgbw(0, color_off);
+          LED.sync();
+
+          if(wasPresentMaster)
           {
-            Serial.println("removed");
-            SignalRemovedMember();
-            whitelistRemove(wasPresent);
+            if(keyingPresentTime < 10)
+            {
+              //Master was presented, opening keying process
+              if(openkeying) SignalPositive();
+              else
+              {
+                //Master presented, closing Keying process
+                SignalEndKeying();
+                state = idle;
+              }
+            }
+            
           }
           else
           {
-            if(whitelist[WHITELIST_SIZE - 1] == 0)
+            if(keyingPresentTime >= 5) {}
+            else
             {
-              Serial.println("added");
-              SignalPositiveSound();
-              whitelistAdd(wasPresent);
-            }
-            else 
-            {
-              Serial.println("Whitelist full");
-              Serial.println(whitelist[WHITELIST_SIZE]);
-              SignalWhitelistFull();
+              //Add User to Whitelist
+              if(whitelistMemberCount < WHITELIST_SIZE)
+              {
+                SignalPositiveSound();
+                whitelistAdd(wasPresent);
+              }
+              else 
+              {
+                //Whitelist is full, reject adding user to Whitelist
+                SignalWhitelistFull();
+              }
             }
           }
+          
+          keyingTimeout = 0;
+          openkeying = 0;
+          keyingPresentTime = 0;
+          time.loopcounter = 0;
         }
-        
-        keyingTimeout = 0;
-        openkeying = 0;
-        keyingPresentTime = 0;
-        time.loopcounter = 0;
-      }
-    break;
-
-    default:
       break;
+
+      default:
+        break;
     }
 
     //----------Loop Footer
 
+    //Reset Values
     wasPresent = 0;
     RfidPresent.old = RfidPresent.act;
     if(RfidPresent.edge_neg) 
@@ -409,7 +441,8 @@ void loop()
   }
 }
 
-/*----------Signalisation Functions*/
+
+//==================== Signalisation Functions
 
 void SignalPositive()
 {
@@ -433,7 +466,7 @@ void SignalPositiveSound()
 
 void SignalRemovedMember()
 {
-  for (char i = 0; i < 2; i++)
+  for (char i = 0; i < 3; i++)
   {
     tone(SIGNALIZER_BUZZER, 3000);
     LED.set_rgbw(0, color_off);
@@ -540,8 +573,10 @@ void SignalFullReset()
   LED.sync();
 }
 
-/*----------Program Logic Functions*/
 
+//==================== RFID Functions ====================
+
+//Checks if Tag is Master
 bool checkMaster()
 {
   status = NULL;
@@ -569,6 +604,7 @@ bool checkMaster()
   }
 }
 
+//Checks if Tag is present
 bool tagPresent()
 {
 
@@ -611,6 +647,7 @@ bool tagPresent()
   }
 }
 
+//Returns Tag UID
 unsigned long getUID()
 {
   status = NULL;
@@ -637,8 +674,9 @@ unsigned long getUID()
   }
 }
 
-/*----------Whitelist Functions*/
+//==================== Whitelist Functions ====================
 
+//Removes User from Whitelist
 void whitelistRemove(unsigned long UID)
 {
   for (unsigned char searchLoop = 0; searchLoop < WHITELIST_SIZE; searchLoop++)
@@ -652,15 +690,19 @@ void whitelistRemove(unsigned long UID)
       for (int moveLoop = searchLoop; moveLoop < WHITELIST_SIZE; moveLoop++)
         whitelist[moveLoop] = whitelist[moveLoop + 1];
       
-      whitelist[WHITELIST_SIZE] = 0;
+      whitelist[WHITELIST_SIZE - 1] = 0x00000000;
 
       EEPROM.put(ADDRESS_WHITELIST, whitelist);
+
+      whitelistMemberCount--;
+      EEPROM.put(ADDRESS_WHITELISTCOUNT, whitelistMemberCount);
       break;
     }
   }
   return;
 }
 
+//Adds User to Whitelist
 void whitelistAdd(unsigned long UID)
 {
   if(UID == 0) return;
@@ -669,7 +711,6 @@ void whitelistAdd(unsigned long UID)
   {
     if (whitelist[searchLoop] == UID)
     {
-      // Signal Positive | UID ist bereits in liste gespeichert
       return;
     }
   }
@@ -680,7 +721,9 @@ void whitelistAdd(unsigned long UID)
     {
       whitelist[nextNull] = UID;
       EEPROM.put(ADDRESS_WHITELIST, whitelist);
-      // Signal positive | user zur liste hinzugefügt
+
+      whitelistMemberCount++;
+      EEPROM.put(ADDRESS_WHITELISTCOUNT, whitelistMemberCount);
       return;
     }
   }
@@ -689,6 +732,7 @@ void whitelistAdd(unsigned long UID)
   return;
 }
 
+//Deletes all Users from Whietlist
 void whitelistReset()
 {
   for (unsigned char deleteLoop = 0; deleteLoop < WHITELIST_SIZE; deleteLoop++)
@@ -699,9 +743,13 @@ void whitelistReset()
   whitelist[WHITELIST_SIZE] = 0;
 
   EEPROM.put(ADDRESS_WHITELIST, whitelist);
+
+  whitelistMemberCount = 0;
+  EEPROM.put(ADDRESS_WHITELISTCOUNT, whitelistMemberCount);
   return;
 }
 
+//Checks if UID is contained in Whitelist
 bool isWhitelistMember(unsigned long UID)
 {
   for (unsigned char searchLoop = 0; searchLoop < WHITELIST_SIZE; searchLoop++)
@@ -714,13 +762,16 @@ bool isWhitelistMember(unsigned long UID)
   return 0;
 }
 
-/*Master Functions*/
+//==================== Master Functions ====================
+
+//Sets the Master Tag
 void masterSet(unsigned long UID)
 {
   registeredMaster = UID;
   EEPROM.put(ADDRESS_MASTER, registeredMaster);
 }
 
+//Resets the Master Tag
 void masterReset()
 {
   registeredMaster = 0;
