@@ -18,6 +18,8 @@
 #define SIGNALIZER_LED 15
 #define SIGNALIZER_OPENER 17
 
+/*How long the Lock should be open after authentication*/
+#define OPEN_TIME 3
 /*Define size of Whitelist (depends on RAM size of Controller)*/
 #define WHITELIST_SIZE 100
 
@@ -269,7 +271,7 @@ void loop()
               //Access Granted
               digitalWrite(SIGNALIZER_OPENER, HIGH);
               SignalPositive();
-              delay(5000);
+              delay(OPEN_TIME);
               digitalWrite(SIGNALIZER_OPENER, LOW);
             }
             //Access Denied
