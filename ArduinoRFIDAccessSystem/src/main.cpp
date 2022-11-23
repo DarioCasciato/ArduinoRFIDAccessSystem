@@ -333,7 +333,7 @@ void loop()
               whitelistReset();
             }
             //Master held longer than 15 seconds, reset Master + Whitelist
-            if(keyingPresentTime == 15 && keyingResetMaster == 0)
+            if(keyingPresentTime == 13 && keyingResetMaster == 0)
             {
               keyingResetMaster = 1;
               SignalFullReset();
