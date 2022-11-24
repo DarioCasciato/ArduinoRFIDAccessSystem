@@ -6,22 +6,10 @@
 #include <MFRC522.h>
 #include <string.h>
 #include "../lib/Arduino_SK6812/SK6812.h"
+#include "configurations.h"
 
 
 //==================== Defines ====================
-
-/*Pin definition*/
-#define RST_PIN 9
-#define SS_PIN 10
-
-#define SIGNALIZER_BUZZER 14
-#define SIGNALIZER_LED 15
-#define SIGNALIZER_OPENER 17
-
-/*How long the Lock should be open after authentication in seconds*/
-#define OPEN_TIME 3
-/*Define size of Whitelist (depends on RAM size of Controller)*/
-#define WHITELIST_SIZE 100
 
 #define ADDRESS_WHITELIST 0x020
 #define ADDRESS_WHITELISTCOUNT 0x005
@@ -52,10 +40,7 @@ enum states_t {noMaster, idle, keying};
 SK6812 LED(1);                    // Numbers of LEDs in LED chain
 MFRC522 mfrc522(SS_PIN, RST_PIN); // Create MFRC522 instance
 
-/*Colors*/
-RGBW color_red = {100, 0, 0, 0}; // Values from 0-255
-RGBW color_green = {0, 100, 0, 0};
-RGBW color_off = {0, 0, 0, 0};
+
 
 //==================== Function Prototypes ====================
 
